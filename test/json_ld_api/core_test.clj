@@ -1,0 +1,298 @@
+(ns json-ld-api.core-test
+  "Scored against the official W3C JSON-LD 1.1 expansion test suite — 276 positive
+   and 109 negative cases, committed under test/fixtures/ so the suite needs no
+   network.
+
+   The negative cases assert the spec's own error CODE, not merely that something
+   was raised. A processor that threw `NullPointerException` where the spec says
+   `invalid IRI mapping` would pass a weaker check while telling its caller nothing."
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [json-ld-api.core :as jld]))
+
+(defn- fixture [rel]
+  (let [f (io/resource (str "fixtures/" (str/replace rel "/" "__")))]
+    (when f (slurp f))))
+
+(defn- read-json [rel]
+  (when-let [s (fixture rel)] (json/read-str s)))
+
+(def ^:private manifest
+  (delay (json/read-str (slurp (io/resource "fixtures/expand-manifest.jsonld"))
+                        :key-fn keyword)))
+
+(defn- test-kind [entry]
+  ;; the manifest is read with :key-fn keyword, so `@type` arrives as :@type
+  (let [type (get entry (keyword "@type"))]
+    (cond (some #{"jld:NegativeEvaluationTest"} type) :negative
+          (some #{"jld:PositiveEvaluationTest"} type) :positive)))
+
+(defn- opts-for [{:keys [option]}]
+  (cond-> {}
+    (:base option) (assoc :base (:base option))
+    (:expandContext option) (assoc :expand-context
+                                   (read-json (str "expand/"
+                                                   (last (str/split (:expandContext option) #"/")))))))
+
+;; Contexts the suite references remotely. This library never fetches; the suite's
+;; own files are supplied explicitly, which is exactly how a caller must use it.
+(defn- contexts-for [entry]
+  (let [in (:input entry)
+        dir (subs in 0 (inc (str/last-index-of in "/")))]
+    (into {}
+          (keep (fn [n]
+                  (when-let [c (read-json (str dir n))]
+                    [(str "https://w3c.github.io/json-ld-api/tests/" dir n) c])))
+          ;; the suite's context files follow a NNNN-context.jsonld convention
+          (let [stem (first (str/split (last (str/split in #"/")) #"-in"))]
+            [(str stem "-context.jsonld")]))))
+
+(defn- run-one [entry]
+  (let [input (read-json (:input entry))
+        opts (assoc (opts-for entry) :contexts (contexts-for entry))]
+    (case (test-kind entry)
+      :positive
+      (let [expected (read-json (:expect entry))]
+        (try
+          (let [actual (jld/expand input opts)]
+            {:outcome (if (= expected actual) :pass :MISMATCH)
+             :expected expected :actual actual})
+          (catch clojure.lang.ExceptionInfo e
+            {:outcome (if (= "unsupported" (:json-ld/error (ex-data e)))
+                        :unsupported :threw)
+             :error (:json-ld/error (ex-data e))
+             :unsupported (:json-ld/unsupported (ex-data e))})
+          (catch Exception e {:outcome :crash :error (str (class e) ": " (ex-message e))})))
+
+      :negative
+      (let [want (:expectErrorCode entry)]
+        (try
+          (let [actual (jld/expand input opts)]
+            {:outcome :SHOULD-HAVE-THROWN :want want :actual actual})
+          (catch clojure.lang.ExceptionInfo e
+            (let [got (:json-ld/error (ex-data e))]
+              {:outcome (cond (= got want) :pass
+                              (= got "unsupported") :unsupported
+                              :else :wrong-code)
+               :want want :got got}))
+          (catch Exception e {:outcome :crash :error (str (class e))}))))))
+
+(deftest official-w3c-expand-suite
+  (let [entries (:sequence @manifest)
+        ;; the suite covers JSON-LD 1.0 behaviour too; this library targets 1.1
+        v11 (remove #(= "json-ld-1.0" (:specVersion (:option %))) entries)
+        results (mapv (fn [e] (assoc (run-one e) :id (get e (keyword "@id")) :name (:name e)
+                                     :kind (test-kind e)))
+                      v11)
+        by (group-by (juxt :kind :outcome) results)
+        n (fn [k o] (count (get by [k o])))
+        pos-total (count (filter #(= :positive (:kind %)) results))
+        neg-total (count (filter #(= :negative (:kind %)) results))]
+
+    (println (format "\n  official JSON-LD 1.1 expand suite (%d of %d entries; %d are 1.0-only)"
+                     (count v11) (count entries) (- (count entries) (count v11))))
+    (println (format "    positive: %d/%d exact match   (%d unsupported-and-refused, %d threw, %d mismatch, %d crash)"
+                     (n :positive :pass) pos-total
+                     (n :positive :unsupported) (n :positive :threw)
+                     (n :positive :MISMATCH) (n :positive :crash)))
+    (println (format "    negative: %d/%d exact error code (%d unsupported-and-refused, %d wrong code, %d did NOT throw, %d crash)"
+                     (n :negative :pass) neg-total
+                     (n :negative :unsupported) (n :negative :wrong-code)
+                     (n :negative :SHOULD-HAVE-THROWN) (n :negative :crash)))
+
+    (testing "nothing CRASHES — every failure is a described error, not a stack trace
+              leaking out of the implementation"
+      (is (empty? (concat (get by [:positive :crash]) (get by [:negative :crash])))
+          (str "crashes: " (pr-str (map #(select-keys % [:id :error])
+                                        (concat (get by [:positive :crash])
+                                                (get by [:negative :crash])))))))
+
+    ;; These are PINNED MEASUREMENTS, not targets, and a baseline is not approval.
+    ;; They exist so the numbers can only move forward: a regression fails here, and
+    ;; the gap stays printed above on every run rather than hiding behind a green
+    ;; check. The counts are stated in the README and the namespace docstring too.
+    (testing "no regression in exact positive matches"
+      (is (>= (n :positive :pass) 98)
+          (format "positive matches fell to %d/%d" (n :positive :pass) pos-total)))
+
+    (testing "no regression in exact negative error codes"
+      (is (>= (n :negative :pass) 45)
+          (format "negative matches fell to %d/%d" (n :negative :pass) neg-total)))
+
+    (testing "KNOWN GAP: 30 malformed documents are still accepted rather than
+              refused. This is why `expand` must not be used as a validator — see
+              the namespace docstring. The count may only go down."
+      (is (<= (count (get by [:negative :SHOULD-HAVE-THROWN])) 30)
+          (str "MORE invalid input is now accepted: "
+               (pr-str (map #(select-keys % [:id :name :want])
+                            (get by [:negative :SHOULD-HAVE-THROWN])))))
+      (println (format "    KNOWN GAP: %d malformed documents are accepted instead of refused"
+                       (count (get by [:negative :SHOULD-HAVE-THROWN])))))))
+
+;; ── the security property: contexts are never fetched ────────────────────────
+
+(deftest a-remote-context-is-refused-not-fetched
+  (testing "a fetched @context would let its host change what a signature covers,
+            after signing, with no key and no detectable tampering — the document
+            would still verify, against a different graph. So there is no fetch."
+    (let [doc {"@context" "https://example.com/ctx.jsonld" "name" "x"}
+          e (try (jld/expand doc) (catch clojure.lang.ExceptionInfo ex ex))]
+      (is (= "context-not-provided" (:json-ld/error (ex-data e))))
+      (is (= "https://example.com/ctx.jsonld" (:url (ex-data e))))
+      (testing "and the error says why, so nobody adds a fetch to 'fix' it"
+        (is (str/includes? (:note (ex-data e)) "signature"))))
+
+    (testing "supplying it explicitly works, which is the intended usage"
+      (let [ctx {"@context" {"name" "http://schema.org/name"}}
+            doc {"@context" "https://example.com/ctx.jsonld" "name" "x"}]
+        (is (= [{"http://schema.org/name" [{"@value" "x"}]}]
+               (jld/expand doc {:contexts {"https://example.com/ctx.jsonld" ctx}})))))))
+
+;; ── unimplemented constructs refuse rather than drop triples ─────────────────
+
+(deftest an-unimplemented-keyword-throws-rather-than-being-ignored
+  (testing "ignoring @nest would return an expansion MISSING triples, and the
+            caller's next step is to sign it — so the failure would surface as a
+            signature over a graph nobody intended, not as an error"
+    (doseq [kw ["@nest" "@included" "@direction"]]
+      (let [doc {"@context" {"p" {"@id" "http://ex.com/p"}} kw {}}
+            e (try (jld/expand doc) (catch clojure.lang.ExceptionInfo ex ex))]
+        (is (= "unsupported" (:json-ld/error (ex-data e))) (str kw " must refuse"))
+        (is (= kw (:json-ld/unsupported (ex-data e)))))))
+
+  (testing "an unsupported @container variant is refused when the property is USED,
+            not when it is merely defined. Defining-time refusal made shared
+            contexts unusable over terms no document touches -- credentials/v2 is
+            exactly that case."
+    (let [ctx {"@context" {"p" {"@id" "http://ex.com/p" "@container" "@index"}}}]
+      (testing "defining it alone is fine"
+        (is (= [] (jld/expand ctx))))
+      (testing "using it refuses"
+        (let [e (try (jld/expand (assoc ctx "p" {"k" "v"}))
+                     (catch clojure.lang.ExceptionInfo ex ex))]
+          (is (= "unsupported" (:json-ld/error (ex-data e))))
+          (is (= "@container @index" (:json-ld/unsupported (ex-data e)))))))))
+
+;; ── the pieces, checked directly ──────────────────────────────────────────────
+
+(deftest iri-expansion-distinguishes-vocab-from-document-relative
+  (testing "§5.2.2: the same string expands differently as a key and as an @id,
+            which is why the two callers pass different flags"
+    (let [ctx {:term-definitions {} :vocab "http://vocab.example/" :base "http://doc.example/x/y"}]
+      (is (= "http://vocab.example/name" (jld/expand-iri ctx "name" {:vocab? true})))
+      (is (= "http://doc.example/x/z" (jld/expand-iri ctx "z" {:document-relative? true})))
+      (testing "and with neither flag it is left alone"
+        (is (= "name" (jld/expand-iri ctx "name" {})))))))
+
+(deftest a-compact-iri-needs-a-prefix-flagged-term
+  (let [ctx (#'json-ld-api.core/process-context
+             {:term-definitions {} :base nil}
+             {"ex" "http://ex.com/" "notpfx" {"@id" "http://ex.com/" "@prefix" false}}
+             {})]
+    (is (= "http://ex.com/a" (jld/expand-iri ctx "ex:a" {:vocab? true})))
+    (testing "@prefix false means the term is NOT usable as a compact-IRI prefix"
+      (is (= "notpfx:a" (jld/expand-iri ctx "notpfx:a" {:vocab? true}))))))
+
+(deftest a-keyword-like-term-is-dropped-not-treated-as-a-property
+  (testing "§4.2.2: `@foo` is not a keyword, and treating it as an ordinary term
+            would turn a typo into a property"
+    (is (nil? (jld/expand-iri {:term-definitions {} :vocab "http://v/"} "@foo" {:vocab? true})))
+    (is (= [] (jld/expand {"@foo" "bar"})))))
+
+(deftest a-free-floating-node-is-dropped
+  (testing "§5.1.2 step 19 — the suite's very first case"
+    (is (= [] (jld/expand {"@id" "http://ex.com/only-an-id"})))))
+
+(deftest base-resolution-removes-dot-segments
+  (let [f #(#'json-ld-api.core/resolve-against-base %1 %2)]
+    (is (= "http://ex.com/a/c" (f "http://ex.com/a/b" "c")))
+    (is (= "http://ex.com/c" (f "http://ex.com/a/b" "/c")))
+    (is (= "http://ex.com/c" (f "http://ex.com/a/b" "../c")))
+    (is (= "http://ex.com/a/b#f" (f "http://ex.com/a/b" "#f")))
+    (is (= "https://other.example/x" (f "http://ex.com/a/b" "https://other.example/x")))))
+
+;; ── the actual use case: a real Verifiable Credential ────────────────────────
+;; This test is worth more than the suite percentage. The suite told me I was at
+;; 92/273; expanding a real credential told me the library would refuse EVERY VC,
+;; because credentials/v2 puts `@container: @graph` on `proof` and declares `@json`
+;; on three terms a credential never touches. A pass rate cannot surface that.
+
+(def ^:private vc-v2-context
+  (delay (json/read-str (slurp (io/resource "fixtures/vc-credentials-v2.jsonld")))))
+
+(def ^:private a-credential
+  {"@context" ["https://www.w3.org/ns/credentials/v2"]
+   "id" "urn:uuid:0c07c1ce"
+   "type" ["VerifiableCredential"]
+   "issuer" "did:web:hooks.itonami.cloud:orgs:acme"
+   "validFrom" "2026-07-31T00:00:00Z"
+   "credentialSubject" {"id" "did:web:example.com:alice" "name" "Alice"}
+   "proof" {"type" "DataIntegrityProof" "cryptosuite" "eddsa-rdfc-2022"
+            "created" "2026-07-31T00:00:00Z" "proofPurpose" "assertionMethod"
+            "verificationMethod" "did:web:hooks.itonami.cloud:orgs:acme#key-1"
+            "proofValue" "z3FXQ"}})
+
+(deftest a-real-verifiable-credential-expands
+  (let [[doc] (jld/expand a-credential
+                          {:contexts {"https://www.w3.org/ns/credentials/v2" @vc-v2-context}})]
+    (is (= "urn:uuid:0c07c1ce" (get doc "@id")))
+    (is (= ["https://www.w3.org/2018/credentials#VerifiableCredential"] (get doc "@type")))
+
+    (testing "the issuer becomes a node reference, not a string literal — the
+              credentials/v2 context types it @id"
+      (is (= [{"@id" "did:web:hooks.itonami.cloud:orgs:acme"}]
+             (get doc "https://www.w3.org/2018/credentials#issuer"))))
+
+    (testing "validFrom is coerced to xsd:dateTime by the context, so the signed
+              graph carries the datatype rather than a bare string"
+      (is (= [{"@value" "2026-07-31T00:00:00Z"
+               "@type" "http://www.w3.org/2001/XMLSchema#dateTime"}]
+             (get doc "https://www.w3.org/2018/credentials#validFrom"))))
+
+    (testing "proof is wrapped in a GRAPH object, because credentials/v2 declares
+              @container: @graph on it. This is the term that made @graph support
+              mandatory rather than optional."
+      (let [proof (get doc "https://w3id.org/security#proof")]
+        (is (= 1 (count proof)))
+        (is (contains? (first proof) "@graph"))
+        (let [[p] (get (first proof) "@graph")]
+          (is (= ["https://w3id.org/security#DataIntegrityProof"] (get p "@type")))
+          (testing "and the DataIntegrityProof type-scoped context supplies the
+                    datatypes the signature is taken over"
+            (is (= [{"@value" "eddsa-rdfc-2022"
+                     "@type" "https://w3id.org/security#cryptosuiteString"}]
+                   (get p "https://w3id.org/security#cryptosuite")))
+            (is (= [{"@value" "z3FXQ" "@type" "https://w3id.org/security#multibase"}]
+                   (get p "https://w3id.org/security#proofValue")))
+            (is (= [{"@id" "https://www.w3.org/ns/credentials/assertionMethod"}]
+                   (get p "https://w3id.org/security#proofPurpose"))
+                "proofPurpose is an IRI, not a string")))))
+
+    (testing "credentialSubject keeps its id as @id and maps name through schema.org"
+      (is (= [{"@id" "did:web:example.com:alice"
+               "https://schema.org/name" [{"@value" "Alice"}]}]
+             (get doc "https://www.w3.org/2018/credentials#credentialSubject"))))))
+
+(deftest a-credential-without-its-context-is-refused-not-guessed
+  (testing "the same document with no :contexts must fail loudly — expanding it
+            against a guessed vocabulary would produce a different graph, and the
+            next step is to sign it"
+    (is (= "context-not-provided"
+           (:json-ld/error (ex-data (try (jld/expand a-credential)
+                                         (catch clojure.lang.ExceptionInfo e e))))))))
+
+(deftest an-unused-json-typed-term-does-not-block-a-context
+  (testing "credentials/v2 declares @json on `_sd`, `cnf/jwk` and `jsonSchema`.
+            Refusing at DEFINITION time made the whole context unusable over terms
+            no credential touches; the refusal belongs where it changes output."
+    (is (some? (jld/expand a-credential
+                           {:contexts {"https://www.w3.org/ns/credentials/v2"
+                                       @vc-v2-context}})))
+    (testing "but a document that ACTUALLY uses a @json-typed term is refused"
+      (let [doc {"@context" {"j" {"@id" "http://ex.com/j" "@type" "@json"}}
+                 "j" {"any" "json"}}
+            e (try (jld/expand doc) (catch clojure.lang.ExceptionInfo ex ex))]
+        (is (= "unsupported" (:json-ld/error (ex-data e))))
+        (is (= "@json" (:json-ld/unsupported (ex-data e))))))))
