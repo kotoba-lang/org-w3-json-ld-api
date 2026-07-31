@@ -30,7 +30,7 @@
    including dropping free-floating nodes.
 
    **Not implemented, and each throws rather than being ignored:** `@nest`, `@json`
-   type coercion, `@import`, `@propagate`, `@included`, `@direction`, and the
+   type coercion, `@import`, `@included`, `@direction`, and the
    `@container` variants `@index`/`@id`/`@type`.
 
    Throwing matters more here than in most libraries. A processor that quietly
@@ -41,7 +41,7 @@
 
    ## `expand` is NOT a validator
 
-   Measured against the official suite, **24 of its 103 malformed documents are
+   Measured against the official suite, **25 of its 103 malformed documents are
    still accepted rather than refused** (the exact list prints when the suite runs).
    So a successful `expand` does not mean the input was valid JSON-LD. Do not use it
    as an admission check on untrusted input; validate separately, and treat
@@ -55,8 +55,8 @@
 
    Current standing, pinned as a floor so it can only improve:
 
-       positive: 107/273 exact match  (98 refused as unsupported, 54 mismatch)
-       negative:  50/103 exact code   (24 accepted that should have been refused)
+       positive: 123/273 exact match  (95 refused as unsupported, 42 mismatch)
+       negative:  51/103 exact code   (25 accepted that should have been refused)
 
    The suite percentage is not the useful number, though. What told me this library
    would refuse *every real Verifiable Credential* was expanding one: credentials/v2
@@ -76,7 +76,7 @@
 (def unsupported-keywords
   "Refused with `:json-ld/unsupported`. See the namespace docstring for why silence
    would be worse than failure here."
-  #{"@nest" "@import" "@propagate" "@included" "@direction" "@json"})
+  #{"@nest" "@import" "@included" "@direction" "@json"})
 
 (defn- fail!
   "`code` is the spec's own error code string where one applies, so callers can
@@ -327,8 +327,9 @@
    context that contains one, is an error — and TRUE for a property- or type-scoped
    context, which is allowed to do both. Without the distinction, the legal case and
    the illegal one are indistinguishable and one of them has to be got wrong."
-  ([ctx local opts] (process-context ctx local opts false))
-  ([ctx local opts override-protected?]
+  ([ctx local opts] (process-context ctx local opts false true))
+  ([ctx local opts override-protected?] (process-context ctx local opts override-protected? true))
+  ([ctx local opts override-protected? propagate?]
   (reduce
    (fn [acc c]
      (cond
@@ -354,10 +355,25 @@
                           (assoc opts :contexts (:contexts opts))))
 
        (jmap? c)
-       (let [_ (doseq [k (keys c)] (when (unsupported-keywords k) (unsupported! k)))
+       (let [;; §4.1.2: "If propagate is false, and result does not have a previous
+             ;; context, set previous context in result to active context." Decided
+             ;; per context item, because an explicit @propagate applies wherever it
+             ;; is written — not only to the type-scoped default. Deciding it once
+             ;; from the caller's flag ignored `@propagate: false` on a
+             ;; property-scoped or embedded context.
+             item-propagate? (if (contains? c "@propagate")
+                               (get c "@propagate")
+                               propagate?)
+             acc (if (and (not item-propagate?) (not (:previous-context acc)))
+                   (assoc acc :previous-context (dissoc acc :previous-context))
+                   acc)
+             _ (doseq [k (keys c)] (when (unsupported-keywords k) (unsupported! k)))
              version (get c "@version")
              _ (when (and version (not= 1.1 version) (not= 1 (compare version 1.1)))
                  (when-not (== 1.1 version) (fail! "invalid @version value" {:version version})))
+             _ (when (and (contains? c "@propagate")
+                          (not (boolean? (get c "@propagate"))))
+                 (fail! "invalid @propagate value" {:value (get c "@propagate")}))
              protected (get c "@protected")
              acc (cond-> acc protected (assoc :protected true))
              acc (if (contains? c "@base")
@@ -489,7 +505,20 @@
           element)
 
     (jmap? element)
-    (let [;; NOTE the property-scoped context is applied where the VALUE is
+    (let [;; §5.1.2: "If active context has a previous context, the active context is
+          ;; not propagated. If element does not contain an @value entry, and element
+          ;; does not consist of a single @id entry, set active context to previous
+          ;; context." Entering a NEW node object is where a type-scoped context stops
+          ;; applying; a value object or a bare node reference is not a new node.
+          ctx (if (and (:previous-context ctx)
+                       (not (some #(= "@value" (expand-iri ctx % {:vocab? true}))
+                                  (keys element)))
+                       (not (and (= 1 (count element))
+                                 (= "@id" (expand-iri ctx (first (keys element))
+                                                      {:vocab? true})))))
+                (:previous-context ctx)
+                ctx)
+          ;; NOTE the property-scoped context is applied where the VALUE is
           ;; recursed into (see the ordinary-property branch below), not here.
           ;; Applying it only here meant a SCALAR value never saw it: the official
           ;; eddsa-rdfc-2022 vector resolved `proofPurpose: "assertionMethod"` to
@@ -512,7 +541,14 @@
                             ;; holds. Passing true made 4 negative cases stop
                             ;; refusing, which is how the reading was checked.
                             (if (:has-scoped-context? d)
-                              (process-context a (:scoped-context d) opts)
+                              ;; a type-scoped context does not propagate: override
+                              ;; protected stays at its default too
+                              (process-context a (:scoped-context d) opts false
+                                               (if (and (jmap? (:scoped-context d))
+                                                        (contains? (:scoped-context d)
+                                                                   "@propagate"))
+                                                 (get (:scoped-context d) "@propagate")
+                                                 false))
                               a)))
                         ctx
                         (sort (filter string? (arrayify (get element type-key)))))
