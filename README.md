@@ -117,11 +117,24 @@ These run expansion *and* conversion, so they are a joint measure. Comparison is
 the **canonical form of both sides** — raw N-Quads text would differ on blank node
 labels and statement order, neither of which carries meaning.
 
+## Both hosts, because a number's spelling gets signed
+
+`to-rdf` turns a JSON number into an RDF literal, and the two hosts disagree
+natively: the JVM writes `1.0E0` where JavaScript writes `1e+0`. XSD canonical form
+is the former, and the string is what gets hashed — so a divergence would mean a
+credential signed on one host does not verify on the other, with nothing to notice.
+
+`test/nbb_smoke.cljs` pins the same lexical forms the JVM suite measures (`1.5E0`,
+`1.0E-1`, `3.14159265358979E0`, `1.0E21`, and the 1e21 integer/double boundary) and
+runs in CI. They agree — but before that file existed, nothing here was verified on
+`:cljs` at all.
+
 ## Test
 
 ```bash
 clojure -M:test     # includes the whole official suite, no network
 clojure -M:lint
+npm run smoke       # the nbb host, same values pinned
 ```
 
 ## License

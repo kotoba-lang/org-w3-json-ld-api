@@ -17,3 +17,14 @@ jobs:
           cli: latest
       - run: clojure -M:test
       - run: clojure -M:lint
+
+      # The :cljs host. `to-rdf` formats numbers per host into strings that get
+      # SIGNED, and the two platforms disagree natively (JVM 1.0E0 vs JS 1e+0), so
+      # a divergence here would mean a credential signed on one host does not verify
+      # on the other -- with nothing else to notice. There was no cljs verification
+      # in this repo at all before this step.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install -g nbb
+      - run: npm run smoke
