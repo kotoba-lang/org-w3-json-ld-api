@@ -29,8 +29,12 @@
     (cond (some #{"jld:NegativeEvaluationTest"} type) :negative
           (some #{"jld:PositiveEvaluationTest"} type) :positive)))
 
-(defn- opts-for [{:keys [option]}]
-  (cond-> {}
+(defn- opts-for [{:keys [option input]}]
+  ;; The suite's convention: the base IRI defaults to the input document's own URL.
+  ;; Without it every case whose expected output resolves a relative IRI mismatches
+  ;; — a gap in THIS harness rather than in the library, which is why the mismatch
+  ;; count was overstating the real gap. The toRdf harness already did this.
+  (cond-> {:base (str "https://w3c.github.io/json-ld-api/tests/" input)}
     (:base option) (assoc :base (:base option))
     (:expandContext option) (assoc :expand-context
                                    (read-json (str "expand/"
@@ -114,17 +118,17 @@
     ;; the gap stays printed above on every run rather than hiding behind a green
     ;; check. The counts are stated in the README and the namespace docstring too.
     (testing "no regression in exact positive matches"
-      (is (>= (n :positive :pass) 107)
+      (is (>= (n :positive :pass) 123)
           (format "positive matches fell to %d/%d" (n :positive :pass) pos-total)))
 
     (testing "no regression in exact negative error codes"
-      (is (>= (n :negative :pass) 50)
+      (is (>= (n :negative :pass) 51)
           (format "negative matches fell to %d/%d" (n :negative :pass) neg-total)))
 
-    (testing "KNOWN GAP: 24 malformed documents are still accepted rather than
+    (testing "KNOWN GAP: 25 malformed documents are still accepted rather than
               refused. This is why `expand` must not be used as a validator — see
               the namespace docstring. The count may only go down."
-      (is (<= (count (get by [:negative :SHOULD-HAVE-THROWN])) 24)
+      (is (<= (count (get by [:negative :SHOULD-HAVE-THROWN])) 25)
           (str "MORE invalid input is now accepted: "
                (pr-str (map #(select-keys % [:id :name :want])
                             (get by [:negative :SHOULD-HAVE-THROWN])))))
@@ -414,3 +418,57 @@
                                   "@context" {"p" "http://e/other"}}}
                  "@type" "T"
                  "p" "v"})))))
+
+;; ── @propagate: a type-scoped context stops at the node it names ──────────────
+;; This matters beyond conformance. `credentials/v2` uses type-scoped contexts
+;; heavily, so a context that wrongly propagated would change what a term means
+;; DEEP inside a credential — and that meaning is what gets signed.
+
+(deftest a-type-scoped-context-does-not-reach-nested-nodes
+  (testing "§5.1.2: entering a new node object rolls a non-propagating context back.
+            A type-scoped context governs the node carrying the type and not the
+            nodes inside it."
+    (let [doc {"@context" {"@version" 1.1
+                           "T" {"@id" "http://e/T"
+                                "@context" {"inner" "http://e/scoped"}}
+                           "child" {"@id" "http://e/child" "@type" "@id"}}
+               "@type" "T"
+               "inner" "at the typed node"
+               "http://e/nested" {"inner" "inside a nested node"}}
+          [out] (jld/expand doc)]
+      (testing "the scoped term resolves on the node that carries the type"
+        (is (= [{"@value" "at the typed node"}] (get out "http://e/scoped"))))
+      (testing "but NOT inside a nested node object — the term is unmapped there,
+                so it is dropped rather than resolving to the scoped IRI"
+        (let [nested (first (get out "http://e/nested"))]
+          (is (nil? (get nested "http://e/scoped"))
+              (str "the type-scoped context leaked into a nested node: "
+                   (pr-str nested))))))))
+
+(deftest a-value-object-is-not-a-new-node-so-the-rollback-does-not-apply
+  (testing "the rule excludes an @value entry and a bare @id reference: neither is a
+            new node object, so a type-scoped context still governs them"
+    (let [doc {"@context" {"@version" 1.1
+                           "T" {"@id" "http://e/T"
+                                "@context" {"inner" {"@id" "http://e/scoped"
+                                                     "@type" "http://e/dt"}}}}
+               "@type" "T"
+               "inner" {"@value" "v"}}
+          [out] (jld/expand doc)]
+      (is (= [{"@value" "v"}] (get out "http://e/scoped"))))))
+
+(deftest an-explicit-propagate-is-honoured-wherever-it-is-written
+  (testing "`@propagate: false` on an EMBEDDED context must also stop at a nested
+            node. Deciding propagation from the caller's default alone ignored it,
+            which two suite cases caught once @propagate stopped being refused."
+    (let [doc {"@context" {"@version" 1.1 "@propagate" false
+                           "inner" "http://e/scoped"}
+               "inner" "here"
+               "http://e/nested" {"inner" "there"}}
+          [out] (jld/expand doc)]
+      (is (= [{"@value" "here"}] (get out "http://e/scoped")))
+      (is (nil? (get (first (get out "http://e/nested")) "http://e/scoped")))))
+
+  (testing "and a non-boolean @propagate is refused"
+    (is (= "invalid @propagate value"
+           (err {"@context" {"@version" 1.1 "@propagate" "yes"} "x" "y"})))))
