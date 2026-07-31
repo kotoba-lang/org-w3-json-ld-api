@@ -55,7 +55,7 @@
 
    Current standing, pinned as a floor so it can only improve:
 
-       positive: 100/273 exact match  (98 refused as unsupported, 54 mismatch)
+       positive: 107/273 exact match  (98 refused as unsupported, 54 mismatch)
        negative:  50/103 exact code   (24 accepted that should have been refused)
 
    The suite percentage is not the useful number, though. What told me this library
@@ -185,7 +185,9 @@
    pass rate."
   #{"@list" "@set" "@graph"})
 
-(defn- create-term-definition [ctx local-ctx term defined]
+(defn- create-term-definition
+  ([ctx local-ctx term defined] (create-term-definition ctx local-ctx term defined false))
+  ([ctx local-ctx term defined override-protected?]
   (cond
     (= "@type" term)
     ;; §4.2.2 step 4: only @protected and @container:@set may be set on @type
@@ -209,7 +211,7 @@
                   (string? value) {"@id" value}
                   (jmap? value) value
                   :else (fail! "invalid term definition" {:term term}))]
-      (when (and previous (:protected? previous))
+      (when (and previous (:protected? previous) (not override-protected?))
         ;; the redefinition must be identical to the existing one, else it is refused
         (let [candidate-iri (when value
                               (let [idv (get value "@id")]
@@ -295,26 +297,46 @@
                                      ;; usable as a prefix
                                      (and (string? (get local-ctx term))
                                           (boolean (re-find #"[:/?#\[\]@]$" (str iri)))))
-                          :protected? (boolean (or (get value "@protected") (:protected ctx)))
+                          ;; An explicit `@protected: false` on the term wins over a
+                          ;; context-level `@protected: true`. `(or false true)` is
+                          ;; true, which made every opt-out silently protected and
+                          ;; rejected legal overrides in a scoped context.
+                          :protected? (boolean (if (contains? value "@protected")
+                                                 (get value "@protected")
+                                                 (:protected ctx)))
                           :scoped-context (get value "@context")
+                          ;; `@context: null` is a scoped context that NULLIFIES,
+                          ;; and it is not the same as having no scoped context at
+                          ;; all — but both store nil. Branching on the value made
+                          ;; every nullifying scoped context a no-op.
+                          :has-scoped-context? (contains? value "@context")
                           :has-language? (contains? value "@language")}]
           (when (contains? value "@language")
             (when-not (or (nil? language) (string? language))
               (fail! "invalid language mapping" {:term term})))
-          [(assoc-in ctx [:term-definitions term] definition) (assoc defined term true)])))))
+          [(assoc-in ctx [:term-definitions term] definition) (assoc defined term true)]))))))
 
 ;; ── §4.1.2 Context Processing ────────────────────────────────────────────────
 
 (defn process-context
   "§4.1.2. `local` may be a map, a string (a reference resolved through
-   `:contexts`), an array of either, or nil (which resets the context)."
-  [ctx local opts]
+   `:contexts`), an array of either, or nil (which resets the context).
+
+   `override-protected?` is §4.1.2's *override protected* parameter. It is false for
+   a document's own `@context` — where redefining a protected term, or nullifying a
+   context that contains one, is an error — and TRUE for a property- or type-scoped
+   context, which is allowed to do both. Without the distinction, the legal case and
+   the illegal one are indistinguishable and one of them has to be got wrong."
+  ([ctx local opts] (process-context ctx local opts false))
+  ([ctx local opts override-protected?]
   (reduce
    (fn [acc c]
      (cond
        (nil? c)
-       ;; §4.1.2 step 5.1: null resets — but not through a protected term
-       (do (when (some :protected? (vals (:term-definitions acc)))
+       ;; §4.1.2 step 5.1: null resets — but not through a protected term, unless
+       ;; this is a scoped context, which is permitted to clear one
+       (do (when (and (not override-protected?)
+                      (some :protected? (vals (:term-definitions acc))))
              (fail! "invalid context nullification" {}))
            (assoc acc :term-definitions {} :vocab nil :language nil
                   :base (:original-base acc)))
@@ -362,12 +384,13 @@
                    acc)
              terms (remove #{"@base" "@vocab" "@language" "@version" "@protected"
                              "@direction" "@import" "@propagate"} (keys c))]
-         (first (reduce (fn [[a defined] t] (create-term-definition a c t defined))
+         (first (reduce (fn [[a defined] t]
+                          (create-term-definition a c t defined override-protected?))
                         [acc {}] terms)))
 
        :else (fail! "invalid local context" {:context c})))
    ctx
-   (if (jarray? local) local [local])))
+   (if (jarray? local) local [local]))))
 
 ;; ── §5.3.2 Value Expansion ───────────────────────────────────────────────────
 
@@ -482,7 +505,15 @@
           ctx (if type-key
                 (reduce (fn [a t]
                           (let [d (get (:term-definitions a) t)]
-                            (if (:scoped-context d) (process-context a (:scoped-context d) opts) a)))
+                            ;; A type-scoped context gets the DEFAULT, false. The
+                            ;; spec names "true for override protected" explicitly
+                            ;; where it applies — the property-scoped invocation —
+                            ;; and says nothing here, so the documented default
+                            ;; holds. Passing true made 4 negative cases stop
+                            ;; refusing, which is how the reading was checked.
+                            (if (:has-scoped-context? d)
+                              (process-context a (:scoped-context d) opts)
+                              a)))
                         ctx
                         (sort (filter string? (arrayify (get element type-key)))))
                 ctx)
@@ -571,8 +602,10 @@
                      (let [def (get (:term-definitions ctx) k)
                            ;; §5.1.2 step 13.9: a term's own @context governs its
                            ;; values, whatever shape they have
-                           vctx (if (:scoped-context def)
-                                  (process-context ctx (:scoped-context def) opts)
+                           vctx (if (:has-scoped-context? def)
+                                  ;; a property-scoped context, processed with
+                                  ;; override protected TRUE (§4.1.2)
+                                  (process-context ctx (:scoped-context def) opts true)
                                   ctx)
                            ev (expand-element vctx k v opts)
                            list-container? (and def (some #{"@list"} (:container def)))

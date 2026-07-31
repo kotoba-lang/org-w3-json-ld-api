@@ -114,7 +114,7 @@
     ;; the gap stays printed above on every run rather than hiding behind a green
     ;; check. The counts are stated in the README and the namespace docstring too.
     (testing "no regression in exact positive matches"
-      (is (>= (n :positive :pass) 100)
+      (is (>= (n :positive :pass) 107)
           (format "positive matches fell to %d/%d" (n :positive :pass) pos-total)))
 
     (testing "no regression in exact negative error codes"
@@ -351,3 +351,66 @@
            (err {"http://e/p" {"@list" ["foo"] "@id" "http://e/bar"}}))))
   (testing "while @index alongside @list is allowed"
     (is (vector? (jld/expand {"http://e/p" {"@list" ["foo"] "@index" "i"}})))))
+
+;; ── @protected, which was wrong in both directions ───────────────────────────
+;; A protected term cannot be redefined — except by a scoped context, which §4.1.2
+;; processes with `override protected` true. Getting that flag wrong fails BOTH ways:
+;; too strict rejects legal overrides, too loose accepts illegal ones.
+
+(deftest an-explicit-protected-false-beats-the-context-default
+  (testing "`@protected: true` at context level protects every term, but a term may
+            opt out. The old code did (or false true) => true, so the opt-out was
+            silently ignored and a legal override in a scoped context was rejected."
+    (let [doc {"@context" {"@version" 1.1
+                           "@protected" true
+                           "protected" "http://e/protected"
+                           "unprotected" {"@id" "http://e/unprotected1"
+                                          "@protected" false}}
+               "protected" {"@context" {"unprotected" "http://e/unprotected2"}
+                            "unprotected" "overridden"}
+               "unprotected" "original"}
+          [out] (jld/expand doc)]
+      (testing "the opted-out term really was overridden by the scoped context"
+        (is (= [{"@value" "overridden"}]
+               (get-in out ["http://e/protected" 0 "http://e/unprotected2"]))))
+      (testing "while outside that scope it keeps its original meaning"
+        (is (= [{"@value" "original"}] (get out "http://e/unprotected1")))))))
+
+(deftest a-scoped-context-may-nullify-one-that-holds-protected-terms
+  (testing "§4.1.2 step 5.1 refuses nullification only when `override protected` is
+            false. A property-scoped context is processed with it TRUE, so `null`
+            there is legal — this used to raise invalid context nullification."
+    (let [doc {"@context" {"@version" 1.1
+                           "@protected" true
+                           "p1" "http://e/p1"
+                           "p2" {"@id" "http://e/p2" "@context" nil}}
+               "p1" "one"
+               "p2" {"@context" {"p1" "http://e/p3"}
+                     "p1" "redefined"}}
+          [out] (jld/expand doc)]
+      (is (= [{"@value" "one"}] (get out "http://e/p1")))
+      (is (= [{"@value" "redefined"}]
+             (get-in out ["http://e/p2" 0 "http://e/p3"]))))))
+
+(deftest a-protected-term-is-still-protected-outside-a-scoped-context
+  (testing "the other direction: the document's own @context has override protected
+            FALSE, so redefining a protected term there remains an error"
+    (is (= "protected term redefinition"
+           (err {"@context" [{"@version" 1.1 "@protected" true "p" "http://e/p1"}
+                             {"p" "http://e/p2"}]
+                 "p" "v"})))))
+
+(deftest type-scoped-contexts-use-the-default-not-the-property-scoped-rule
+  (testing "the spec names \"true for override protected\" for the property-scoped
+            invocation and says nothing for the type-scoped one, so the documented
+            default (false) holds. Passing true there gained one positive case and
+            lost four negatives, which is how the reading was checked rather than
+            assumed."
+    (is (= "protected term redefinition"
+           (err {"@context" {"@version" 1.1
+                             "@protected" true
+                             "p" "http://e/p"
+                             "T" {"@id" "http://e/T"
+                                  "@context" {"p" "http://e/other"}}}
+                 "@type" "T"
+                 "p" "v"})))))
