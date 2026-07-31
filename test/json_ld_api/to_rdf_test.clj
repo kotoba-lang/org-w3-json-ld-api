@@ -124,7 +124,7 @@
     ;; Pinned measurements, not targets. A baseline is not approval; the gaps stay
     ;; printed above on every run.
     (testing "no regression in positives"
-      (is (>= (n :positive :pass) 139)
+      (is (>= (n :positive :pass) 141)
           (format "positive fell to %d/%d" (n :positive :pass) (tot :positive))))
 
     (testing "no regression in exact negative error codes"
@@ -137,7 +137,7 @@
 
     (testing "KNOWN GAP: 27 malformed documents still convert instead of being
               refused, same caveat as expansion — this pipeline is not a validator"
-      (is (<= (n :negative :SHOULD-HAVE-THROWN) 27)))))
+      (is (<= (n :negative :SHOULD-HAVE-THROWN) 26)))))
 
 ;; ── §7.4 the number rules, which are where this algorithm bites ──────────────
 
