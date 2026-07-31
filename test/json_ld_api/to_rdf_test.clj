@@ -124,7 +124,7 @@
     ;; Pinned measurements, not targets. A baseline is not approval; the gaps stay
     ;; printed above on every run.
     (testing "no regression in positives"
-      (is (>= (n :positive :pass) 141)
+      (is (>= (n :positive :pass) 148)
           (format "positive fell to %d/%d" (n :positive :pass) (tot :positive))))
 
     (testing "no regression in exact negative error codes"
