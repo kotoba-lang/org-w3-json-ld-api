@@ -433,11 +433,12 @@
           element)
 
     (jmap? element)
-    (let [;; property-scoped context
-          pdef (get (:term-definitions ctx) active-property)
-          ctx (if (:scoped-context pdef)
-                (process-context ctx (:scoped-context pdef) opts)
-                ctx)
+    (let [;; NOTE the property-scoped context is applied where the VALUE is
+          ;; recursed into (see the ordinary-property branch below), not here.
+          ;; Applying it only here meant a SCALAR value never saw it: the official
+          ;; eddsa-rdfc-2022 vector resolved `proofPurpose: "assertionMethod"` to
+          ;; the wrong IRI because of exactly that, and my own credential test had
+          ;; accepted a third wrong value for want of a reference.
           ;; local @context
           ctx (if (contains? element "@context")
                 (process-context ctx (get element "@context") opts)
@@ -529,7 +530,12 @@
                      ;; an ordinary property
                      :else
                      (let [def (get (:term-definitions ctx) k)
-                           ev (expand-element ctx k v opts)
+                           ;; §5.1.2 step 13.9: a term's own @context governs its
+                           ;; values, whatever shape they have
+                           vctx (if (:scoped-context def)
+                                  (process-context ctx (:scoped-context def) opts)
+                                  ctx)
+                           ev (expand-element vctx k v opts)
                            list-container? (and def (some #{"@list"} (:container def)))
                            graph-container? (and def (some #{"@graph"} (:container def)))
                            _ (doseq [c (:container def)]

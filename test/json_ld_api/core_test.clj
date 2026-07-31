@@ -114,7 +114,7 @@
     ;; the gap stays printed above on every run rather than hiding behind a green
     ;; check. The counts are stated in the README and the namespace docstring too.
     (testing "no regression in exact positive matches"
-      (is (>= (n :positive :pass) 98)
+      (is (>= (n :positive :pass) 100)
           (format "positive matches fell to %d/%d" (n :positive :pass) pos-total)))
 
     (testing "no regression in exact negative error codes"
@@ -266,9 +266,15 @@
                    (get p "https://w3id.org/security#cryptosuite")))
             (is (= [{"@value" "z3FXQ" "@type" "https://w3id.org/security#multibase"}]
                    (get p "https://w3id.org/security#proofValue")))
-            (is (= [{"@id" "https://www.w3.org/ns/credentials/assertionMethod"}]
+            ;; This value is W3C's, from the eddsa-rdfc-2022 test vector in
+            ;; vc-di-eddsa Appendix B.1 — not mine. The assertion originally read
+            ;; `https://www.w3.org/ns/credentials/assertionMethod`, which is what
+            ;; this library produced before property-scoped contexts were applied
+            ;; to scalar values. It was wrong, and it passed, because I had no
+            ;; reference to check it against.
+            (is (= [{"@id" "https://w3id.org/security#assertionMethod"}]
                    (get p "https://w3id.org/security#proofPurpose"))
-                "proofPurpose is an IRI, not a string")))))
+                "proofPurpose is an IRI, and specifically security#assertionMethod")))))
 
     (testing "credentialSubject keeps its id as @id and maps name through schema.org"
       (is (= [{"@id" "did:web:example.com:alice"
