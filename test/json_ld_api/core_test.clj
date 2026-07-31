@@ -118,13 +118,13 @@
           (format "positive matches fell to %d/%d" (n :positive :pass) pos-total)))
 
     (testing "no regression in exact negative error codes"
-      (is (>= (n :negative :pass) 45)
+      (is (>= (n :negative :pass) 50)
           (format "negative matches fell to %d/%d" (n :negative :pass) neg-total)))
 
-    (testing "KNOWN GAP: 30 malformed documents are still accepted rather than
+    (testing "KNOWN GAP: 24 malformed documents are still accepted rather than
               refused. This is why `expand` must not be used as a validator — see
               the namespace docstring. The count may only go down."
-      (is (<= (count (get by [:negative :SHOULD-HAVE-THROWN])) 30)
+      (is (<= (count (get by [:negative :SHOULD-HAVE-THROWN])) 24)
           (str "MORE invalid input is now accepted: "
                (pr-str (map #(select-keys % [:id :name :want])
                             (get by [:negative :SHOULD-HAVE-THROWN])))))
@@ -302,3 +302,52 @@
             e (try (jld/expand doc) (catch clojure.lang.ExceptionInfo ex ex))]
         (is (= "unsupported" (:json-ld/error (ex-data e))))
         (is (= "@json" (:json-ld/unsupported (ex-data e))))))))
+
+;; ── the malformed documents this version began refusing ──────────────────────
+;; Each of these expanded successfully before. Accepting them is not harmless in a
+;; signing pipeline: the document goes on to be canonicalized and signed, so a
+;; malformed input becomes a signature over whatever graph the processor guessed.
+
+(defn- err [doc]
+  (:json-ld/error (ex-data (try (jld/expand doc) (catch clojure.lang.ExceptionInfo e e)))))
+
+(deftest a-datatype-that-is-not-a-usable-iri-is-refused
+  (testing "`absolute-iri?` only looks for a scheme, so a datatype with a SPACE in it
+            passed it. That is not an IRI, it is a mistake — and it would have been
+            signed as though it meant something."
+    (is (= "invalid typed value"
+           (err {"@id" "http://e/s"
+                 "http://e/p" {"@value" "v" "@type" "http://e/baz z"}}))))
+  (testing "and a blank node is not a datatype"
+    (is (= "invalid typed value"
+           (err {"http://e/p" {"@value" "v" "@type" "_:dt"}}))))
+  (testing "and a value object takes ONE datatype, not a list of them"
+    (is (= "invalid typed value"
+           (err {"@context" {"ex" "http://e/"}
+                 "ex:p" {"@value" "v" "@type" ["ex:a" "ex:b"]}}))))
+  (testing "while an ordinary typed literal is of course fine — this check runs
+            AFTER the single-element array is unwrapped, which is where I first
+            put it wrong and rejected every typed value in the suite"
+    (is (= [{"http://e/p" [{"@value" "v" "@type" "http://e/t"}]}]
+           (jld/expand {"http://e/p" {"@value" "v" "@type" "http://e/t"}})))))
+
+(deftest a-json-typed-value-reports-unsupported-not-a-bad-datatype
+  (testing "@json IS a valid datatype; this library just does not implement JSON
+            literals. Reporting `invalid typed value` would send a caller looking
+            for a bug in their own document."
+    (is (= "unsupported" (err {"http://e/p" {"@value" "x" "@type" "@json"}})))))
+
+(deftest two-keys-expanding-to-the-same-keyword-are-refused
+  (testing "`id` and `ID` both aliasing @id is ambiguous, and two processors could
+            resolve it differently — so one of them must not silently win"
+    (is (= "colliding keywords"
+           (err {"@context" {"id" "@id" "ID" "@id"}
+                 "id" "http://e/foo" "ID" "http://e/bar"})))))
+
+(deftest a-list-object-carrying-anything-else-is-refused
+  (testing "a list object holds @list and at most @index. An @id alongside it has no
+            meaning, and dropping it silently would lose part of the document"
+    (is (= "invalid set or list object"
+           (err {"http://e/p" {"@list" ["foo"] "@id" "http://e/bar"}}))))
+  (testing "while @index alongside @list is allowed"
+    (is (vector? (jld/expand {"http://e/p" {"@list" ["foo"] "@index" "i"}})))))

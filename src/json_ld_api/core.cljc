@@ -41,7 +41,7 @@
 
    ## `expand` is NOT a validator
 
-   Measured against the official suite, **30 of its 103 malformed documents are
+   Measured against the official suite, **24 of its 103 malformed documents are
    still accepted rather than refused** (the exact list prints when the suite runs).
    So a successful `expand` does not mean the input was valid JSON-LD. Do not use it
    as an admission check on untrusted input; validate separately, and treat
@@ -55,8 +55,8 @@
 
    Current standing, pinned as a floor so it can only improve:
 
-       positive: 98/273 exact match  (97 refused as unsupported, 57 mismatch)
-       negative: 45/103 exact code   (30 accepted that should have been refused)
+       positive: 100/273 exact match  (98 refused as unsupported, 54 mismatch)
+       negative:  50/103 exact code   (24 accepted that should have been refused)
 
    The suite percentage is not the useful number, though. What told me this library
    would refuse *every real Verifiable Credential* was expanding one: credentials/v2
@@ -391,6 +391,14 @@
 
 (declare expand-element)
 
+(defn- usable-iri?
+  "An absolute IRI with nothing in it that makes it unusable as one. `absolute-iri?`
+   only checks for a scheme, so `http://example.com/baz z` passes it — and a datatype
+   with a space in it is not an IRI, it is a mistake that would be signed."
+  [s]
+  (and (absolute-iri? s)
+       (not (re-find #"[\s\u0000-\u0020<>\"{}|^`\\]" s))))
+
 (defn- expand-value-object [result]
   ;; §5.1.2 step 13.4.7 validation of a value object
   (let [v (get result "@value")
@@ -401,8 +409,33 @@
     (when (and t l) (fail! "invalid value object" {:reason "@type with @language"}))
     (when (and l (not (string? v)) (not (nil? v)))
       (fail! "invalid language-tagged value" {}))
-    (when (and t (not (string? t)) (not (jarray? t)))
-      (fail! "invalid typed value" {}))
+    ;; §5.1.2 step 13.4.7: a value object takes ONE datatype, and it must be an IRI.
+    ;; A blank node datatype is only meaningful under generalized RDF, and a string
+    ;; with a space in it is not an IRI at all — both would otherwise be signed as
+    ;; though they meant something.
+    ;;
+    ;; NOTE the single-element array: expansion arrayifies @type for node objects and
+    ;; this function is what unwraps it again, so the check has to run on the
+    ;; NORMALISED value. Validating before unwrapping rejected every ordinary typed
+    ;; literal, including the suite's `basic` case.
+    (let [t1 (if (and (jarray? t) (= 1 (count t))) (first t) t)]
+      (when (some? t1)
+        ;; @json is refused as unsupported, not as a bad datatype: it IS a valid
+        ;; datatype, this library just does not implement JSON literals, and
+        ;; reporting the wrong reason would send a caller looking for a bug in
+        ;; their document.
+        (when (= "@json" t1) (unsupported! "@json"))
+        (when (jarray? t1)
+          (fail! "invalid typed value"
+                 {:reason "a value object takes one datatype" :type t1}))
+        (when-not (string? t1)
+          (fail! "invalid typed value" {:type t1}))
+        (when (blank-node-id? t1)
+          (fail! "invalid typed value" {:reason "a blank node is not a datatype"
+                                        :type t1}))
+        (when-not (usable-iri? t1)
+          (fail! "invalid typed value" {:reason "datatype is not a usable IRI"
+                                        :type t1}))))
     (cond
       (nil? v) nil                                          ; @value null: drop
       :else
@@ -461,6 +494,12 @@
                  (= "@context" k) res
                  :else
                  (let [ek (expand-iri ctx k {:vocab? true})]
+                   ;; §5.1.2 step 13.4: two different keys expanding to the SAME
+                   ;; keyword is ambiguous, and two processors could resolve it
+                   ;; differently. Refuse rather than let one of them win silently.
+                   (when (and ek (json-ld-keywords ek) (contains? res ek)
+                              (not= ek "@type"))
+                     (fail! "colliding keywords" {:keyword ek :key k}))
                    (cond
                      (nil? ek) res
                      (unsupported-keywords ek) (unsupported! ek)
@@ -570,6 +609,12 @@
            (sort (keys element)))]
       (cond
         (contains? result "@value") (expand-value-object result)
+        ;; §5.1.2: a list object carries @list (and at most @index); anything else
+        ;; in it — an @id especially — has no meaning and must not be dropped
+        (and (contains? result "@list")
+             (seq (remove #{"@list" "@index"} (keys result))))
+        (fail! "invalid set or list object"
+               {:keys (vec (remove #{"@list" "@index"} (keys result)))})
         ;; a @set unwraps
         (contains? result "@set") (get result "@set")
         ;; §5.1.2 step 19: drop a free-floating node object

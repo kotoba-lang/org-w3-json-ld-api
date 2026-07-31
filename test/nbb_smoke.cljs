@@ -12,8 +12,7 @@
 ;;
 ;;   npm run smoke
 (ns nbb-smoke
-  (:require [clojure.string :as str]
-            [json-ld-api.core :as jld]
+  (:require [json-ld-api.core :as jld]
             [json-ld-api.to-rdf :as tordf]))
 
 (def ^:private failures (atom 0))
