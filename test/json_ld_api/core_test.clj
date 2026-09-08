@@ -8,7 +8,7 @@
    `invalid IRI mapping` would pass a weaker check while telling its caller nothing."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [json-ld-api.core :as jld]))
 

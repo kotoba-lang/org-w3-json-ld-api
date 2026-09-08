@@ -1,5 +1,10 @@
 {:paths ["src"]
- :deps {io.github.kotoba-lang/org-w3-nquads
+ :deps {
+        ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
+        ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
+        ;; this repo silently rides whatever a sibling happens to name.
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+       io.github.kotoba-lang/org-w3-nquads
         {:git/url "https://github.com/kotoba-lang/org-w3-nquads.git"
          :git/sha "794846ca2e718f0b390b0856a8487bc40fa43323"}}
  :aliases

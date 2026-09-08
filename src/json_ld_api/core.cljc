@@ -63,7 +63,7 @@
    puts `@container: @graph` on `proof` and declares `@json` on three terms no
    credential touches, and my refusals were placed at context-processing time. A
    pass rate cannot surface that; `a-real-verifiable-credential-expands` can."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def json-ld-keywords
   "Every keyword the 1.1 grammar defines. Used to reject terms that look like
@@ -283,7 +283,7 @@
                          (let [l (get value "@language")]
                            (when-not (or (nil? l) (string? l))
                              (fail! "invalid language mapping" {:term term}))
-                           (when (string? l) (str/lower-case l))))
+                           (when (string? l) (str/lower l))))
               definition {:iri iri
                           :type-mapping type-mapping
                           :container container
@@ -395,7 +395,7 @@
              acc (if (contains? c "@language")
                    (let [l (get c "@language")]
                      (cond (nil? l) (assoc acc :language nil)
-                           (string? l) (assoc acc :language (str/lower-case l))
+                           (string? l) (assoc acc :language (str/lower l))
                            :else (fail! "invalid default language" {})))
                    acc)
              terms (remove #{"@base" "@vocab" "@language" "@version" "@protected"
@@ -596,7 +596,7 @@
 
                      (= "@language" ek)
                      (if (string? v)
-                       (assoc res "@language" (str/lower-case v))
+                       (assoc res "@language" (str/lower v))
                        (fail! "invalid language-tagged string" {:value v}))
 
                      (= "@index" ek)
