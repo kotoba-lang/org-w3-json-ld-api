@@ -35,7 +35,7 @@
    canonicalize and sign cleanly. That is a property of the pipeline, not a bug in
    this namespace, and it is why a signature over canonical RDF attests to the
    *dataset*, not to the JSON that produced it."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [nquads.core :as nq]))
 
 (def rdf-type "http://www.w3.org/1999/02/22-rdf-syntax-ns#type")

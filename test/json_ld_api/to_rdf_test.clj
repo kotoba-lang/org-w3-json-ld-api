@@ -12,7 +12,7 @@
    matters, which is whether the two datasets are the same graph."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [json-ld-api.core :as jld]
             [json-ld-api.to-rdf :as tordf]
