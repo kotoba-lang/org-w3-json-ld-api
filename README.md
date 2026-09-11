@@ -124,7 +124,7 @@ natively: the JVM writes `1.0E0` where JavaScript writes `1e+0`. XSD canonical f
 is the former, and the string is what gets hashed — so a divergence would mean a
 credential signed on one host does not verify on the other, with nothing to notice.
 
-`test/nbb_smoke.cljs` pins the same lexical forms the JVM suite measures (`1.5E0`,
+`test/nbb_smoke.cljk` pins the same lexical forms the JVM suite measures (`1.5E0`,
 `1.0E-1`, `3.14159265358979E0`, `1.0E21`, and the 1e21 integer/double boundary) and
 runs in CI. They agree — but before that file existed, nothing here was verified on
 `:cljs` at all.
