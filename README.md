@@ -132,8 +132,8 @@ runs in CI. They agree — but before that file existed, nothing here was verifi
 ## Test
 
 ```bash
-clojure -M:test     # includes the whole official suite, no network
-clojure -M:lint
+kbb -M:test     # includes the whole official suite, no network
+kbb -M:lint
 npm run smoke       # the nbb host, same values pinned
 ```
 
