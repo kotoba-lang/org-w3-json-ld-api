@@ -9,7 +9,7 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [json-ld-api.core :as jld]))
 
 (defn- fixture [rel]
