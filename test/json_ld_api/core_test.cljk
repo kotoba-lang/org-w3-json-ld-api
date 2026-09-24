@@ -6,7 +6,7 @@
    The negative cases assert the spec's own error CODE, not merely that something
    was raised. A processor that threw `NullPointerException` where the spec says
    `invalid IRI mapping` would pass a weaker check while telling its caller nothing."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
