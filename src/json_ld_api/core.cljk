@@ -55,7 +55,7 @@
 
    Current standing, pinned as a floor so it can only improve:
 
-       positive: 123/273 exact match  (95 refused as unsupported, 42 mismatch)
+       positive: 125/273 exact match  (95 refused as unsupported, 40 mismatch)
        negative:  51/103 exact code   (25 accepted that should have been refused)
 
    The suite percentage is not the useful number, though. What told me this library
@@ -185,10 +185,49 @@
    pass rate."
   #{"@list" "@set" "@graph"})
 
+(declare create-term-definition)
+
+(defn- define-dependencies
+  "§5.2.2 steps 4 and 6.3, as invoked from §4.2.2 with a local context and
+   `defined`: before a value inside a term definition is IRI-expanded, the term it
+   names -- and the prefix of a compact IRI -- must already be defined when the
+   same local context defines it.
+
+   Without this the result depended on the ORDER in which a context's keys were
+   walked. A context such as
+     {\"rdfs\" \"http://www.w3.org/2000/01/rdf-schema#\"
+      \"subClassOf\" {\"@id\" \"rdfs:subClassOf\" \"@type\" \"@id\"}}
+   is legal whichever key comes first, but when `subClassOf` was reached before
+   `rdfs` its IRI stayed the literal string \"rdfs:subClassOf\" -- which passes
+   `absolute-iri?` (scheme `rdfs`) and so was never refused. A map of more than
+   eight entries does not keep insertion order, so WHICH terms broke was decided
+   by hashing. Measured 2026-09-25 on the Mithril context: subClassOf, domain,
+   range, sh:* and mith:name came out unexpanded while subPropertyOf and
+   mith:description expanded."
+  [ctx local-ctx term value defined override-protected?]
+  (if (or (not (string? value)) (json-ld-keywords value) (keyword-like? value))
+    [ctx defined]
+    (let [define (fn [[c d] dep]
+                   (if (and dep (not= dep term) (contains? local-ctx dep)
+                            (not (true? (get d dep))))
+                     (create-term-definition c local-ctx dep d override-protected?)
+                     [c d]))
+          prefix (when (and (str/includes? value ":") (not (blank-node-id? value)))
+                   (let [i (str/index-of value ":")
+                         p (subs value 0 i)]
+                     (when-not (or (= "_" p) (str/starts-with? (subs value (inc i)) "//"))
+                       p)))]
+      (-> [ctx defined] (define value) (define prefix)))))
+
 (defn- create-term-definition
   ([ctx local-ctx term defined] (create-term-definition ctx local-ctx term defined false))
   ([ctx local-ctx term defined override-protected?]
   (cond
+    ;; §4.2.2 step 1: already defined, possibly as a dependency of an earlier term
+    (true? (get defined term)) [ctx defined]
+    ;; ... or being defined right now: a term whose IRI needs itself
+    (false? (get defined term)) (fail! "cyclic IRI mapping" {:term term})
+
     (= "@type" term)
     ;; §4.2.2 step 4: only @protected and @container:@set may be set on @type
     (let [v (get local-ctx term)]
@@ -205,12 +244,20 @@
 
     :else
     (let [value (get local-ctx term)
-          previous (get (:term-definitions ctx) term)
           value (cond
                   (nil? value) nil
                   (string? value) {"@id" value}
                   (jmap? value) value
-                  :else (fail! "invalid term definition" {:term term}))]
+                  :else (fail! "invalid term definition" {:term term}))
+          ;; §4.2.2 step 2, then define what the values below expand through
+          [ctx defined]
+          (reduce (fn [[c d] v]
+                    (define-dependencies c local-ctx term v d override-protected?))
+                  [ctx (assoc defined term false)]
+                  (if value
+                    [(get value "@id") (get value "@reverse") (get value "@type") term]
+                    [term]))
+          previous (get (:term-definitions ctx) term)]
       (when (and previous (:protected? previous) (not override-protected?))
         ;; the redefinition must be identical to the existing one, else it is refused
         (let [candidate-iri (when value

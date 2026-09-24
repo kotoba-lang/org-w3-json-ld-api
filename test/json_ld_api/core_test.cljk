@@ -118,7 +118,7 @@
     ;; the gap stays printed above on every run rather than hiding behind a green
     ;; check. The counts are stated in the README and the namespace docstring too.
     (testing "no regression in exact positive matches"
-      (is (>= (n :positive :pass) 123)
+      (is (>= (n :positive :pass) 125)
           (format "positive matches fell to %d/%d" (n :positive :pass) pos-total)))
 
     (testing "no regression in exact negative error codes"
@@ -472,3 +472,33 @@
   (testing "and a non-boolean @propagate is refused"
     (is (= "invalid @propagate value"
            (err {"@context" {"@version" 1.1 "@propagate" "yes"} "x" "y"})))))
+
+(deftest a-prefix-defined-later-in-the-same-context-still-expands
+  (testing "§4.2.2 defines the terms a definition depends on first. A small map
+            literal keeps insertion order, so `p` is reached BEFORE `ex` here; the
+            old walk left p's IRI as the literal \"ex:p\" (it passes absolute-iri?,
+            scheme `ex`) and every triple using it had a non-IRI predicate."
+    (let [doc {"@context" {"p" {"@id" "ex:p" "@type" "xsd:integer"}
+                           "q" "ex:q"
+                           "ex" "http://e/"
+                           "xsd" "http://www.w3.org/2001/XMLSchema#"}
+               "@id" "http://e/s"
+               "p" 1
+               "q" "v"}
+          [out] (jld/expand doc)]
+      (is (= [{"@value" 1 "@type" "http://www.w3.org/2001/XMLSchema#integer"}]
+             (get out "http://e/p")))
+      (is (= [{"@value" "v"}] (get out "http://e/q")))
+      (is (nil? (get out "ex:p")))))
+
+  (testing "a term reached later through a dependency is not redefined, so a
+            protected context that orders its prefix last is not a redefinition"
+    (let [doc {"@context" {"@version" 1.1 "@protected" true
+                           "p" "ex:p" "ex" "http://e/"}
+               "@id" "http://e/s" "p" "v"}
+          [out] (jld/expand doc)]
+      (is (= [{"@value" "v"}] (get out "http://e/p")))))
+
+  (testing "a pair of terms whose IRIs need each other is refused as cyclic, by name"
+    (is (= "cyclic IRI mapping"
+           (err {"@context" {"a" {"@id" "b:x"} "b" {"@id" "a:y"}} "a" "v"})))))

@@ -49,8 +49,8 @@ document never touches; credentials/v2 declares `@json` on `_sd`, `cnf/jwk` and
 
 ```
 official JSON-LD 1.1 expand suite (376 of 385 entries; 9 are 1.0-only)
-  positive: 98/273 exact match   (97 refused as unsupported, 57 mismatch, 0 crash)
-  negative: 45/103 exact error code (30 accepted that should have been refused)
+  positive: 125/273 exact match   (95 refused as unsupported, 13 threw, 40 mismatch, 0 crash)
+  negative: 51/103 exact error code (25 accepted that should have been refused)
 ```
 
 The negative cases assert the spec's own error **code**, not merely that something was
@@ -108,8 +108,8 @@ not to the JSON that produced it.
 
 ```
 official JSON-LD 1.1 toRdf suite (456 of 467 entries; 11 are 1.0-only)
-  positive: 139/340 same graph   (99 refused as unsupported, 73 mismatch, 0 crash)
-  negative:  45/100 exact error code (27 accepted that should have been refused)
+  positive: 157/340 same graph   (97 refused as unsupported, 20 threw, 66 mismatch, 0 crash)
+  negative:  51/100 exact error code (22 accepted that should have been refused)
   syntax:    16/16 converted
 ```
 
@@ -136,6 +136,14 @@ kbb -M:test     # includes the whole official suite, no network
 kbb -M:lint
 npm run smoke       # the nbb host, same values pinned
 ```
+
+Measured 2026-09-25, and this is a known gap in the runner rather than in the
+library: since the `.cljk` rename, the JVM runner finds **0 test namespaces** (it
+exits 0 having run nothing), and `kbb -M:test` stops at `clojure.java.io`, which the
+suites use to read fixtures. The counts above were taken by running both suites
+unchanged except for host shims (fixture reads through `fs`, `catch :default`, a
+`%d`/`%s` format) on the kbb engine. A green `kbb -M:test` or JVM run is therefore
+not evidence until the fixture reads are host-neutral.
 
 ## License
 
