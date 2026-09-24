@@ -10,7 +10,7 @@
    N-Quads text would fail on nothing but blank node labels and statement order,
    neither of which carries meaning; comparing canonical forms asks the question that
    matters, which is whether the two datasets are the same graph."
-  (:require [clojure.data.json :as json]
+  (:require [kotoba.json :as json]
             [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
