@@ -49,7 +49,7 @@ document never touches; credentials/v2 declares `@json` on `_sd`, `cnf/jwk` and
 
 ```
 official JSON-LD 1.1 expand suite (376 of 385 entries; 9 are 1.0-only)
-  positive: 125/273 exact match   (95 refused as unsupported, 13 threw, 40 mismatch, 0 crash)
+  positive: 126/273 exact match   (95 refused as unsupported, 13 threw, 39 mismatch, 0 crash)
   negative: 51/103 exact error code (25 accepted that should have been refused)
 ```
 
@@ -108,7 +108,7 @@ not to the JSON that produced it.
 
 ```
 official JSON-LD 1.1 toRdf suite (456 of 467 entries; 11 are 1.0-only)
-  positive: 157/340 same graph   (97 refused as unsupported, 20 threw, 66 mismatch, 0 crash)
+  positive: 158/340 same graph   (97 refused as unsupported, 20 threw, 65 mismatch, 0 crash)
   negative:  51/100 exact error code (22 accepted that should have been refused)
   syntax:    16/16 converted
 ```
@@ -137,7 +137,7 @@ kbb -M:lint
 npm run smoke       # the nbb host, same values pinned
 ```
 
-Measured 2026-09-25, and this is a known gap in the runner rather than in the
+Measured 2026-09-25 (126 / 158 after the §5.3.2 string-only coercion fix), and this is a known gap in the runner rather than in the
 library: since the `.cljk` rename, the JVM runner finds **0 test namespaces** (it
 exits 0 having run nothing), and `kbb -M:test` stops at `clojure.java.io`, which the
 suites use to read fixtures. The counts above were taken by running both suites
