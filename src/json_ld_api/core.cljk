@@ -55,7 +55,7 @@
 
    Current standing, pinned as a floor so it can only improve:
 
-       positive: 125/273 exact match  (95 refused as unsupported, 40 mismatch)
+       positive: 126/273 exact match  (95 refused as unsupported, 39 mismatch)
        negative:  51/103 exact code   (25 accepted that should have been refused)
 
    The suite percentage is not the useful number, though. What told me this library
@@ -461,9 +461,11 @@
   (let [def (get (:term-definitions ctx) active-property)
         tm (:type-mapping def)]
     (when (= "@json" tm) (unsupported! "@json"))
+    ;; steps 1 and 2 coerce a STRING only: a native number or boolean under
+    ;; @type @id / @vocab stays a value object (it is not a relative IRI)
     (cond
-      (= "@id" tm) {"@id" (expand-iri ctx value {:document-relative? true})}
-      (= "@vocab" tm) {"@id" (expand-iri ctx value {:vocab? true :document-relative? true})}
+      (and (= "@id" tm) (string? value)) {"@id" (expand-iri ctx value {:document-relative? true})}
+      (and (= "@vocab" tm) (string? value)) {"@id" (expand-iri ctx value {:vocab? true :document-relative? true})}
       :else
       (cond-> {"@value" value}
         (and tm (not (#{"@id" "@vocab" "@none"} tm))) (assoc "@type" tm)

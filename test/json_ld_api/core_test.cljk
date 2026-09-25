@@ -118,7 +118,7 @@
     ;; the gap stays printed above on every run rather than hiding behind a green
     ;; check. The counts are stated in the README and the namespace docstring too.
     (testing "no regression in exact positive matches"
-      (is (>= (n :positive :pass) 125)
+      (is (>= (n :positive :pass) 126)
           (format "positive matches fell to %d/%d" (n :positive :pass) pos-total)))
 
     (testing "no regression in exact negative error codes"
@@ -502,3 +502,24 @@
   (testing "a pair of terms whose IRIs need each other is refused as cyclic, by name"
     (is (= "cyclic IRI mapping"
            (err {"@context" {"a" {"@id" "b:x"} "b" {"@id" "a:y"}} "a" "v"})))))
+
+;; ── §5.3.2 value expansion: only a STRING is IRI-coerced ─────────────────────
+
+(deftest a-number-or-boolean-under-type-id-stays-a-literal
+  (testing "JSON-LD 1.1 §5.3.2 step 1 (and step 2 for @vocab) coerces the value to
+            an IRI only when it is a string. A native number under `\"@type\": \"@id\"`
+            is a literal, not the relative IRI `5` resolved against the base -- the
+            old code made it `http://doc.example/5`, a node the author never named."
+    (let [ctx {"@base" "http://doc.example/"
+               "p" {"@id" "http://e/p" "@type" "@id"}
+               "v" {"@id" "http://e/v" "@type" "@vocab"}}]
+      (is (= [{"@id" "http://e/s" "http://e/p" [{"@value" 5}]}]
+             (jld/expand {"@context" ctx "@id" "http://e/s" "p" 5}))
+          "a number under @type @id is a plain literal")
+      (is (= [{"@id" "http://e/s" "http://e/p" [{"@value" true}]}]
+             (jld/expand {"@context" ctx "@id" "http://e/s" "p" true})))
+      (is (= [{"@id" "http://e/s" "http://e/v" [{"@value" 1.5}]}]
+             (jld/expand {"@context" ctx "@id" "http://e/s" "v" 1.5})))
+      (testing "while a string under the same term is still coerced (control)"
+        (is (= [{"@id" "http://e/s" "http://e/p" [{"@id" "http://doc.example/5"}]}]
+               (jld/expand {"@context" ctx "@id" "http://e/s" "p" "5"})))))))
