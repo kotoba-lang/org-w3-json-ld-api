@@ -10,8 +10,8 @@
    N-Quads text would fail on nothing but blank node labels and statement order,
    neither of which carries meaning; comparing canonical forms asks the question that
    matters, which is whether the two datasets are the same graph."
-  (:require [kotoba.json :as json]
-            [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.json :as json]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [json-ld-api.core :as jld]
@@ -63,7 +63,7 @@
                     a (canonical actual)
                     b (canonical (nq/parse expected-text))]
                 {:outcome (if (= a b) :pass :MISMATCH) :expected b :actual a})
-              (catch clojure.lang.ExceptionInfo e
+              (catch kerror/ExceptionInfo e
                 {:outcome (case (:json-ld/error (ex-data e))
                             "unsupported" :unsupported
                             (if (:rdf-canon/error (ex-data e)) :canon-limit :threw))
@@ -75,7 +75,7 @@
           (try
             (let [_ (-> (jld/expand (json/read-str in) opts) (tordf/to-rdf {}))]
               {:outcome :SHOULD-HAVE-THROWN :want (:expectErrorCode entry)})
-            (catch clojure.lang.ExceptionInfo e
+            (catch kerror/ExceptionInfo e
               {:outcome (if (= (:json-ld/error (ex-data e)) (:expectErrorCode entry))
                           :pass :other-error)
                :want (:expectErrorCode entry) :got (:json-ld/error (ex-data e))})
@@ -84,7 +84,7 @@
           :syntax
           (try (let [_ (-> (jld/expand (json/read-str in) opts) (tordf/to-rdf {}))]
                  {:outcome :pass})
-               (catch clojure.lang.ExceptionInfo e
+               (catch kerror/ExceptionInfo e
                  {:outcome (if (= "unsupported" (:json-ld/error (ex-data e)))
                              :unsupported :threw)})
                (catch Exception e {:outcome :crash :error (str (class e))}))
