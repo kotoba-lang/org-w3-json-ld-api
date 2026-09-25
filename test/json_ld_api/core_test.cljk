@@ -6,8 +6,8 @@
    The negative cases assert the spec's own error CODE, not merely that something
    was raised. A processor that threw `NullPointerException` where the spec says
    `invalid IRI mapping` would pass a weaker check while telling its caller nothing."
-  (:require [kotoba.json :as json]
-            [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.json :as json]
+            [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [json-ld-api.core :as jld]))
@@ -63,7 +63,7 @@
           (let [actual (jld/expand input opts)]
             {:outcome (if (= expected actual) :pass :MISMATCH)
              :expected expected :actual actual})
-          (catch clojure.lang.ExceptionInfo e
+          (catch kerror/ExceptionInfo e
             {:outcome (if (= "unsupported" (:json-ld/error (ex-data e)))
                         :unsupported :threw)
              :error (:json-ld/error (ex-data e))
@@ -75,7 +75,7 @@
         (try
           (let [actual (jld/expand input opts)]
             {:outcome :SHOULD-HAVE-THROWN :want want :actual actual})
-          (catch clojure.lang.ExceptionInfo e
+          (catch kerror/ExceptionInfo e
             (let [got (:json-ld/error (ex-data e))]
               {:outcome (cond (= got want) :pass
                               (= got "unsupported") :unsupported
@@ -142,7 +142,7 @@
             after signing, with no key and no detectable tampering — the document
             would still verify, against a different graph. So there is no fetch."
     (let [doc {"@context" "https://example.com/ctx.jsonld" "name" "x"}
-          e (try (jld/expand doc) (catch clojure.lang.ExceptionInfo ex ex))]
+          e (try (jld/expand doc) (catch kerror/ExceptionInfo ex ex))]
       (is (= "context-not-provided" (:json-ld/error (ex-data e))))
       (is (= "https://example.com/ctx.jsonld" (:url (ex-data e))))
       (testing "and the error says why, so nobody adds a fetch to 'fix' it"
@@ -162,7 +162,7 @@
             signature over a graph nobody intended, not as an error"
     (doseq [kw ["@nest" "@included" "@direction"]]
       (let [doc {"@context" {"p" {"@id" "http://ex.com/p"}} kw {}}
-            e (try (jld/expand doc) (catch clojure.lang.ExceptionInfo ex ex))]
+            e (try (jld/expand doc) (catch kerror/ExceptionInfo ex ex))]
         (is (= "unsupported" (:json-ld/error (ex-data e))) (str kw " must refuse"))
         (is (= kw (:json-ld/unsupported (ex-data e)))))))
 
@@ -175,7 +175,7 @@
         (is (= [] (jld/expand ctx))))
       (testing "using it refuses"
         (let [e (try (jld/expand (assoc ctx "p" {"k" "v"}))
-                     (catch clojure.lang.ExceptionInfo ex ex))]
+                     (catch kerror/ExceptionInfo ex ex))]
           (is (= "unsupported" (:json-ld/error (ex-data e))))
           (is (= "@container @index" (:json-ld/unsupported (ex-data e)))))))))
 
@@ -291,7 +291,7 @@
             next step is to sign it"
     (is (= "context-not-provided"
            (:json-ld/error (ex-data (try (jld/expand a-credential)
-                                         (catch clojure.lang.ExceptionInfo e e))))))))
+                                         (catch kerror/ExceptionInfo e e))))))))
 
 (deftest an-unused-json-typed-term-does-not-block-a-context
   (testing "credentials/v2 declares @json on `_sd`, `cnf/jwk` and `jsonSchema`.
@@ -303,7 +303,7 @@
     (testing "but a document that ACTUALLY uses a @json-typed term is refused"
       (let [doc {"@context" {"j" {"@id" "http://ex.com/j" "@type" "@json"}}
                  "j" {"any" "json"}}
-            e (try (jld/expand doc) (catch clojure.lang.ExceptionInfo ex ex))]
+            e (try (jld/expand doc) (catch kerror/ExceptionInfo ex ex))]
         (is (= "unsupported" (:json-ld/error (ex-data e))))
         (is (= "@json" (:json-ld/unsupported (ex-data e))))))))
 
@@ -313,7 +313,7 @@
 ;; malformed input becomes a signature over whatever graph the processor guessed.
 
 (defn- err [doc]
-  (:json-ld/error (ex-data (try (jld/expand doc) (catch clojure.lang.ExceptionInfo e e)))))
+  (:json-ld/error (ex-data (try (jld/expand doc) (catch kerror/ExceptionInfo e e)))))
 
 (deftest a-datatype-that-is-not-a-usable-iri-is-refused
   (testing "`absolute-iri?` only looks for a scheme, so a datatype with a SPACE in it
